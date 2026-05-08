@@ -54,7 +54,34 @@ class ModDBDownloader(DefaultDownloader):
         if not s:
             raise ModDBDownloadError(f"Download link not found when requesting {url}")
 
-        return g_session.get(f"https://www.moddb.com{s[0]}", allow_redirects=False).headers["location"]
+        mirror = f"https://www.moddb.com{s[0]}"
+        # Same-origin navigation: mirror expects a normal browser session (see g_session).
+        r = g_session.get(
+            mirror,
+            allow_redirects=False,
+            headers={"Referer": url},
+        )
+        loc = r.headers.get("Location") or r.headers.get("location")
+        if r.status_code not in (301, 302, 303, 307, 308) or not loc:
+            raise ModDBDownloadError(
+                f"ModDB mirror request failed ({r.status_code}) for {mirror}; "
+                "no redirect to file host — site layout or anti-bot rules may have changed."
+            )
+        return loc
+
+    def _try_resolve_mirror_when_still_start_url(self) -> None:
+        """Sidecar cache restores filename/hash but leaves `_url` as .../start/<id>. Network
+        downloads must use the mirror redirect (CDN); otherwise GET returns HTML (~8 KiB)."""
+        u = self._url
+        if (
+            'moddb.com/addons/start/' not in u
+            and 'moddb.com/downloads/start/' not in u
+        ):
+            return
+        try:
+            self._url = self._get_download_url(u)
+        except (HTTPError, ModDBDownloadError, RequestException):
+            pass
 
     @staticmethod
     def _download_id_from_url(url: str) -> Optional[str]:
@@ -133,6 +160,7 @@ class ModDBDownloader(DefaultDownloader):
 
         # Prefer disk when use_cached: avoids relying on ModDB HTML when the archive + sidecar exist.
         if use_cached and download_id and self._apply_local_moddb_cache(to, download_id):
+            self._try_resolve_mirror_when_still_start_url()
             return super().download(to, use_cached=True)
 
         mirror_ok = False

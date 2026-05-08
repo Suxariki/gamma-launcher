@@ -13,11 +13,12 @@ from launcher.exceptions import HashError
 from launcher.hash import check_hash
 from launcher.archive import extract_archive
 
+# ModDB serves 410 on /downloads/mirror/... when TLS/UA fingerprint does not match a
+# real browser profile (custom fingerprints break mirror redirects).
 g_session = create_scraper(
-    browser={
-       "custom": f"pyGammaLauncher/{__version__}"
-    }
+    browser={"browser": "firefox", "platform": "linux", "desktop": True},
 )
+g_session.headers.update({"X-Gamma-Launcher-Client": f"pyGammaLauncher/{__version__}"})
 "`cloudscraper` scraper object used for all HTTP requests"
 
 
