@@ -1,8 +1,8 @@
 from pathlib import Path
 from platform import system
-from shutil import copy2, copytree, disk_usage
+from shutil import copy2, copytree, disk_usage, move
 from tempfile import TemporaryDirectory
-from typing import Dict
+from typing import Dict, Optional
 
 from launcher.commands import CheckAnomaly
 from launcher.common import anomaly_arg, gamma_arg, cache_dir_arg
@@ -12,6 +12,34 @@ from launcher.userltx import UserLTX
 
 
 guide_url: str = "https://github.com/DravenusRex/stalker-gamma-linux-guide"
+
+
+def _ensure_gamma_downloads_cache_symlink(gamma_dir: Path, cache_path: Optional[str]) -> None:
+    """Make ``<gamma>/downloads`` a symlink to ``cache_path`` on POSIX (matches ``GammaSetup``)."""
+    if not cache_path or system() == "Windows":
+        return
+    cache_dir = Path(cache_path).expanduser()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir.resolve()
+    downloads_dir = gamma_dir / "downloads"
+    if downloads_dir.is_symlink():
+        if downloads_dir.resolve() == target:
+            return
+        downloads_dir.unlink()
+    elif downloads_dir.is_dir():
+        for item in list(downloads_dir.iterdir()):
+            dest = cache_dir / item.name
+            if dest.exists():
+                raise RuntimeError(
+                    f'Cannot use --cache-directory: "{dest}" already exists '
+                    f'(conflicts with "{item.name}" under downloads). '
+                    "Remove or rename the conflicting path, then retry."
+                )
+            move(str(item), str(dest))
+        downloads_dir.rmdir()
+    elif downloads_dir.exists():
+        downloads_dir.unlink()
+    downloads_dir.symlink_to(cache_dir.resolve(), target_is_directory=True)
 
 
 def check_tmp_free_space(size: int) -> None:
@@ -134,10 +162,7 @@ class GammaSetup:
 
         downloads_dir = self._gamma_dir / "downloads"
         downloads_dir.mkdir(exist_ok=True)
-
-        if args.cache_path and system() != "Windows":
-            downloads_dir.rmdir()
-            downloads_dir.symlink_to(self._cache_dir.absolute(), target_is_directory=True)
+        _ensure_gamma_downloads_cache_symlink(self._gamma_dir, args.cache_path)
 
         archive = GithubArchive("https://github.com/Grokitach/gamma_setup")
         archive.download(downloads_dir, True)
@@ -313,6 +338,8 @@ AutomaticArchiveInvalidation=false
 
         if not (self._mod_dir.is_dir() and self._grok_mod_dir.is_dir()):
             GammaSetup().run(args)
+
+        _ensure_gamma_downloads_cache_symlink(self._gamma_dir, getattr(args, "cache_path", None))
 
         # Start installing
         self._repo = args.custom_repo
